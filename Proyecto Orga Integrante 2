@@ -1,0 +1,94 @@
+# --- SECCIÓN INTEGRANTE 2: VALIDACIONES Y LÓGICA DE FRACCIÓN ---
+
+.data
+    # Variables globales compartidas [cite: 81]
+    int_mag:    .word 0      # Magnitud entera
+    frac_bits:  .word 0      # 8 bits de la parte fraccionaria
+    sign_flag:  .word 0      # 0 para +, 1 para -
+
+.text
+
+# --- Rutina Principal de Procesamiento ---
+# Entrada: input_buffer contiene la cadena [cite: 70]
+# Salida: Llena int_mag, frac_bits y sign_flag [cite: 81]
+
+parse_input:
+    la $t0, input_buffer
+    li $t1, 0                # Limpiar acumulador entero
+    sw $zero, sign_flag      # Resetear signo por defecto (+) [cite: 81]
+    sw $zero, frac_bits      # Resetear fracción [cite: 81]
+
+    # 1. Manejo de Signo [cite: 78]
+    lbu $t2, ($t0)
+    bne $t2, 45, check_plus  # 45 = '-'
+    li $t3, 1
+    sw $t3, sign_flag        # Es negativo [cite: 81]
+    addi $t0, $t0, 1
+    j loop_int
+check_plus:
+    bne $t2, 43, loop_int    # 43 = '+'
+    addi $t0, $t0, 1
+
+    # 2. Parseo de Parte Entera
+loop_int:
+    lbu $t2, ($t0)
+    beq $t2, $zero, end_parse
+    beq $t2, 10, end_parse
+    beq $t2, 46, parse_fraccion # 46 = '.' punto decimal [cite: 11]
+    
+    # Validar que sea dígito 0-9 [cite: 12]
+    blt $t2, 48, skip_char
+    bgt $t2, 57, skip_char
+    
+    subi $t2, $t2, 48
+    li $t4, 10
+    mul $t1, $t1, $t4
+    add $t1, $t1, $t2
+
+skip_char:
+    addi $t0, $t0, 1
+    j loop_int
+
+    # 3. Lógica de Fracción (8 bits) 
+parse_fraccion:
+    addi $t0, $t0, 1         # Saltar el punto
+    li $t4, 0                # Acumulador de la parte decimal (ej: 75 para .75)
+    li $t5, 1                # Divisor de potencia de 10
+
+loop_frac_digits:
+    lbu $t2, ($t0)
+    beq $t2, $zero, calc_bits
+    beq $t2, 10, calc_bits
+    
+    subi $t2, $t2, 48
+    li $t6, 10
+    mul $t4, $t4, $t6
+    add $t4, $t4, $t2
+    mul $t5, $t5, $t6        # Ajustar el divisor según cuántos dígitos hay
+    
+    addi $t0, $t0, 1
+    j loop_frac_digits
+
+calc_bits:
+    # Algoritmo: fraccion * 2, si >= 1, bit = 1 [cite: 79]
+    li $t6, 0                # Registro para construir los 8 bits
+    li $t7, 8                # Contador de 8 bits [cite: 50]
+    
+frac_loop_math:
+    beqz $t7, store_frac
+    sll $t4, $t4, 1          # Multiplicar por 2 (desplazamiento)
+    sll $t6, $t6, 1          # Preparar espacio para el siguiente bit
+    
+    blt $t4, $t5, bit_zero
+    ori $t6, $t6, 1          # Bit es 1
+    sub $t4, $t4, $t5        # Restar el equivalente al entero
+bit_zero:
+    addi $t7, $t7, -1
+    j frac_loop_math
+
+store_frac:
+    sw $t6, frac_bits        # Guardar resultado de la fracción [cite: 81]
+
+end_parse:
+    sw $t1, int_mag          # Guardar magnitud entera [cite: 81]
+    jr $ra

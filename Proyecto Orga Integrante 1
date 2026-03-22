@@ -1,15 +1,27 @@
+.data
+    .align 2
+    int_mag:   .word 0
+    frac_bits: .word 0
+    sign_flag: .word 0
+    
+    input_buffer: .space 128     
+    header:       .asciiz "\n********** SISTEMA PANITA KAIOS **********\n"
+    m_origen:     .ascii  "\n--- SELECCIONE ORIGEN ---\n"
+                  .ascii  "1. Binario (C2)   2. BCD       3. Decimal\n"
+                  .ascii  "4. Octal          5. Hex       6. Fraccionario (Decimal)\n"
+                  .asciiz "0. SALIR\n\nSelecciÃ³n de ORIGEN: "
+    m_destino:    .asciiz "Seleccione formato de DESTINO: "
+    m_valor:      .asciiz "Ingrese el valor a convertir (cadena): "
+    m_resultado:  .asciiz "\n>>> RESULTADO: "
+    m_error:      .asciiz "\n[!] Error: Opcion no valida.\n"
+    m_despedida:  .asciiz "\nCerrando sistema... Â¡Hasta luego, Panita!\n"
 
-# Proyecto Orga: Calculadora-Andrea (Integrante 1 )
-
-
-# Imprimir Cadena
 .macro print_str(%label)
     la $a0, %label
     li $v0, 4
     syscall
 .end_macro
 
-# Leer Cadena 
 .macro read_str(%buffer, %size)
     la $a0, %buffer
     li $a1, %size
@@ -17,92 +29,17 @@
     syscall
 .end_macro
 
-# ASCII a Entero (Maneja signo y detiene en punto decimal)
-.macro ascii_to_int(%buffer, %reg_out)
-    la $t0, %buffer
-    li %reg_out, 0
-    li $t1, 10    
-    li $t3, 1      
-    
-    lbu $t2, ($t0)
-    bne $t2, 45, _check_plus # 45 = '-'
-    li $t3, -1
-    addi $t0, $t0, 1
-    j _loop_ascii
-_check_plus:
-    bne $t2, 43, _loop_ascii # 43 = '+'
-    addi $t0, $t0, 1
-
-_loop_ascii:
-    lbu $t2, ($t0)
-    beq $t2, $zero, _end_ascii
-    beq $t2, 10, _end_ascii   
-    beq $t2, 46, _end_ascii 
-    
-    # Validar que sea un número (0-9)
-    blt $t2, 48, _next_char
-    bgt $t2, 57, _next_char
-    
-    subi $t2, $t2, 48         
-    mul %reg_out, %reg_out, $t1
-    add %reg_out, %reg_out, $t2
-    
-_next_char:
-    addi $t0, $t0, 1
-    j _loop_ascii
-_end_ascii:
-    mul %reg_out, %reg_out, $t3
-.end_macro
-
-# Imprimir Bit 
-.macro print_bit(%reg)
-    andi $a0, %reg, 1
-    addi $a0, $a0, 48
+.macro print_sign(%reg_flag)
+    beq %reg_flag, $zero, _plus
+    li $a0, 45
+    j _out_s
+_plus:
+    li $a0, 43
+_out_s:
     li $v0, 11
     syscall
 .end_macro
 
-# Imprimir Nible 
-.macro print_nible(%reg)
-    andi $t9, %reg, 0xF
-    slti $t8, $t9, 10
-    beq $t8, $zero, _is_hex_alpha
-    addi $a0, $t9, 48    
-    j _out_nible
-_is_hex_alpha:
-    addi $a0, $t9, 55    
-_out_nible:
-    li $v0, 11
-    syscall
-.end_macro
-
-# Imprimir Signo
-.macro print_sign(%reg)
-    bltz %reg, _is_neg
-    li $a0, 43           
-    j _out_sign
-_is_neg:
-    li $a0, 45           
-_out_sign:
-    li $v0, 11
-    syscall
-.end_macro
-
-.data
-    .align 2
-    input_buffer: .space 128     # Espacio para la entrada del usuario
-    
-    header:       .asciiz "\n********** SISTEMA PANITA KAIOS **********\n"
-    m_origen:     .ascii  "\n1. Binario (C2)   2. PackDec   3. Base 10\n"
-                  .ascii  "4. Octal          5. Hex       6. Fraccionario\n"
-                  .asciiz "0. SALIR\n\nSeleccione formato de ENTRADA: "
-    m_destino:    .asciiz "Seleccione formato de DESTINO: "
-    m_valor:      .asciiz "Ingrese el valor a convertir: "
-    m_resultado:  .asciiz "\n>>> RESULTADO: "
-    m_error:      .asciiz "\n[!] Error: Opcion no valida.\n"
-    m_despedida:  .asciiz "\nCerrando sistema... ¡Hasta luego,Feliz dia!\n"
-
-#Estructura de la Interfaz   
 .text
 .globl main
 
@@ -110,46 +47,63 @@ main:
     print_str(header)
 
 menu_loop:
-    # Selección de Origen
     print_str(m_origen)
     li $v0, 5
     syscall
-    move $s0, $v0           # $s0 = Tipo de Origen
+    move $s0, $v0
     
-    beq $s0, $zero, exit    # Salir si es 0
+    beq $s0, $zero, exit
     
-    # Validar rango 1-6
     li $t0, 1
     li $t1, 6
     blt $s0, $t0, error_op
     bgt $s0, $t1, error_op
 
-    # Selección de Destino
     print_str(m_destino)
     li $v0, 5
     syscall
-    move $s1, $v0           # $s1 = Tipo de Destino
+    move $s1, $v0
 
-    # Captura del Valor (String)
     print_str(m_valor)
     read_str(input_buffer, 128)
 
-    # Conversión inicial usando la Macro (valor numérico en $s2)
-    ascii_to_int(input_buffer, $s2)
+    beq $s0, 1, parse_bin
+    beq $s0, 2, parse_bcd
+    beq $s0, 3, parse_dec
+    beq $s0, 4, parse_oct
+    beq $s0, 5, parse_hex
+    beq $s0, 6, parse_dec
+    j error_op
 
+parse_bin: 
+parse_bcd: 
+parse_dec: 
+parse_oct: 
+parse_hex: 
+    j output_dispatcher
+
+output_dispatcher:
     print_str(m_resultado)
+    beq $s1, 1, output_bin
+    beq $s1, 2, output_bcd
+    beq $s1, 3, output_dec
+    beq $s1, 4, output_oct
+    beq $s1, 5, output_hex
+    beq $s1, 6, output_bin
+    j error_op
 
-  
-    move $a0, $s2          
-    
-    # Redirección según el destino elegido
-    beq $s1, 1, call_binario
-    beq $s1, 2, call_packdec
-    beq $s1, 3, call_base10
-    beq $s1, 4, call_octal
-    beq $s1, 5, call_hex
-    beq $s1, 6, call_frac
-    
+output_bin: 
+output_bcd: 
+output_dec: 
+output_oct: 
+output_hex:
     j menu_loop
 
+error_op:
+    print_str(m_error)
+    j menu_loop
 
+exit:
+    print_str(m_despedida)
+    li $v0, 10
+    syscall

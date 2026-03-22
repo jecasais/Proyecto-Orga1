@@ -1,0 +1,427 @@
+# =============================================================================
+# PROYECTO MARM – PANITA KAIOS (VERSIÓN CORREGIDA – SIN ETIQUETAS DUPLICADAS)
+# =============================================================================
+
+.data
+    .align 2
+    int_mag:    .word 0
+    frac_bits:  .word 0
+    sign_flag:  .word 0
+
+    input_buffer: .space 128
+    header:       .asciiz "\n********** SISTEMA PANITA KAIOS **********\n"
+    m_origen:     .ascii  "\n--- SELECCIONE ORIGEN ---\n"
+                  .ascii  "1. Binario (C2)   2. BCD       3. Decimal\n"
+                  .ascii  "4. Octal          5. Hex       6. Fraccionario (Decimal)\n"
+                  .asciiz "0. SALIR\n\nSelección de ORIGEN: "
+    m_destino:    .asciiz "Seleccione formato de DESTINO: "
+    m_valor:      .asciiz "Ingrese el valor a convertir (cadena): "
+    m_resultado:  .asciiz "\n>>> RESULTADO: "
+    m_error:      .asciiz "\n[!] Error: Opcion no valida.\n"
+    m_despedida:  .asciiz "\nCerrando sistema... ¡Hasta luego, Panita!\n"
+
+    msg_bin:      .asciiz "Binario: "
+    msg_bcd:      .asciiz "Decimal Empaquetado: "
+    msg_hex:      .asciiz "Hexadecimal: "
+    msg_octal:    .asciiz "Octal: "
+
+# -----------------------------------------------------------------------------
+# MACROS
+# -----------------------------------------------------------------------------
+.macro print_str(%label)
+    la $a0, %label
+    li $v0, 4
+    syscall
+.end_macro
+
+.macro read_str(%buffer, %size)
+    la $a0, %buffer
+    li $a1, %size
+    li $v0, 8
+    syscall
+.end_macro
+
+.macro print_bit(%reg, %pos)
+    srlv $a0, %reg, %pos
+    andi $a0, $a0, 1
+    addi $a0, $a0, 48
+    li $v0, 11
+    syscall
+.end_macro
+
+.macro print_nible(%reg, %pos)
+    srlv $a0, %reg, %pos
+    andi $a0, $a0, 0xF
+    addi $a0, $a0, 48
+    li $v0, 11
+    syscall
+.end_macro
+
+.macro print_sign(%reg_sign)
+    beq %reg_sign, 1, _imprimir_menos
+    li $a0, 43
+    j _mostrar_signo
+_imprimir_menos:
+    li $a0, 45
+_mostrar_signo:
+    li $v0, 11
+    syscall
+.end_macro
+
+# -----------------------------------------------------------------------------
+# PROGRAMA PRINCIPAL
+# -----------------------------------------------------------------------------
+.text
+.globl main
+
+main:
+    print_str(header)
+
+menu_loop:
+    print_str(m_origen)
+    li $v0, 5
+    syscall
+    move $s0, $v0
+
+    beq $s0, $zero, exit
+
+    li $t0, 1
+    li $t1, 6
+    blt $s0, $t0, error_op
+    bgt $s0, $t1, error_op
+
+    print_str(m_destino)
+    li $v0, 5
+    syscall
+    move $s1, $v0
+
+    print_str(m_valor)
+    read_str(input_buffer, 128)
+
+    beq $s0, 1, parse_bin
+    beq $s0, 2, parse_bcd
+    beq $s0, 3, parse_dec
+    beq $s0, 4, parse_oct
+    beq $s0, 5, parse_hex
+    beq $s0, 6, parse_dec
+    j error_op
+
+output_dispatcher:
+    print_str(m_resultado)
+    beq $s1, 1, output_bin
+    beq $s1, 2, output_bcd
+    beq $s1, 3, output_dec
+    beq $s1, 4, output_oct
+    beq $s1, 5, output_hex
+    beq $s1, 6, output_bin
+    j error_op
+
+error_op:
+    print_str(m_error)
+    j menu_loop
+
+exit:
+    print_str(m_despedida)
+    li $v0, 10
+    syscall
+
+# -----------------------------------------------------------------------------
+# PARSEO BINARIO
+# -----------------------------------------------------------------------------
+parse_bin:
+    la $t0, input_buffer
+    li $t1, 0
+    sw $zero, frac_bits
+    lbu $t2, ($t0)
+    subi $t3, $t2, 48
+    sw $t3, sign_flag
+parse_bin_loop:
+    lbu $t2, ($t0)
+    beq $t2, $zero, parse_bin_end
+    beq $t2, 10, parse_bin_end
+    beq $t2, 32, parse_bin_skip
+    subi $t2, $t2, 48
+    sll $t1, $t1, 1
+    or  $t1, $t1, $t2
+parse_bin_skip:
+    addi $t0, $t0, 1
+    j parse_bin_loop
+parse_bin_end:
+    sw $t1, int_mag
+    j output_dispatcher
+
+parse_bcd:
+    j parse_bin
+
+# -----------------------------------------------------------------------------
+# PARSEO DECIMAL (con fracción)
+# -----------------------------------------------------------------------------
+parse_dec:
+    la $t0, input_buffer
+    li $t1, 0
+    sw $zero, sign_flag
+    sw $zero, frac_bits
+    lbu $t2, ($t0)
+    bne $t2, 45, parse_dec_check_plus
+    li $t3, 1
+    sw $t3, sign_flag
+    addi $t0, $t0, 1
+    j parse_dec_loop
+parse_dec_check_plus:
+    bne $t2, 43, parse_dec_loop
+    addi $t0, $t0, 1
+parse_dec_loop:
+    lbu $t2, ($t0)
+    beq $t2, $zero, parse_dec_end
+    beq $t2, 10, parse_dec_end
+    beq $t2, 46, parse_fraccion
+    blt $t2, 48, parse_dec_skip
+    bgt $t2, 57, parse_dec_skip
+    subi $t2, $t2, 48
+    li $t4, 10
+    mul $t1, $t1, $t4
+    add $t1, $t1, $t2
+parse_dec_skip:
+    addi $t0, $t0, 1
+    j parse_dec_loop
+
+parse_fraccion:
+    addi $t0, $t0, 1
+    li $t4, 0
+    li $t5, 1
+parse_frac_loop:
+    lbu $t2, ($t0)
+    beq $t2, $zero, parse_frac_calc
+    beq $t2, 10, parse_frac_calc
+    subi $t2, $t2, 48
+    li $t6, 10
+    mul $t4, $t4, $t6
+    add $t4, $t4, $t2
+    mul $t5, $t5, $t6
+    addi $t0, $t0, 1
+    j parse_frac_loop
+parse_frac_calc:
+    li $t6, 0
+    li $t7, 8
+parse_frac_math:
+    beqz $t7, parse_frac_store
+    sll $t4, $t4, 1
+    sll $t6, $t6, 1
+    blt $t4, $t5, parse_frac_bit_zero
+    ori $t6, $t6, 1
+    sub $t4, $t4, $t5
+parse_frac_bit_zero:
+    addi $t7, $t7, -1
+    j parse_frac_math
+parse_frac_store:
+    sw $t6, frac_bits
+    j parse_dec_end
+
+parse_dec_end:
+    sw $t1, int_mag
+    j output_dispatcher
+
+# -----------------------------------------------------------------------------
+# PARSEO OCTAL
+# -----------------------------------------------------------------------------
+parse_oct:
+    la $t0, input_buffer
+    lbu $t1, ($t0)
+    beq $t1, 43, parse_oct_pos
+    beq $t1, 45, parse_oct_neg
+    j error_op
+parse_oct_pos:
+    li $t2, 0
+    j parse_oct_start
+parse_oct_neg:
+    li $t2, 1
+parse_oct_start:
+    sw $t2, sign_flag
+    addi $t0, $t0, 1
+    li $t3, 0
+parse_oct_loop:
+    lbu $t1, ($t0)
+    beq $t1, $zero, parse_oct_end
+    beq $t1, 10, parse_oct_end
+    subi $t1, $t1, 48
+    sll $t3, $t3, 3
+    add $t3, $t3, $t1
+    addi $t0, $t0, 1
+    j parse_oct_loop
+parse_oct_end:
+    sw $t3, int_mag
+    sw $zero, frac_bits
+    j output_dispatcher
+
+# -----------------------------------------------------------------------------
+# PARSEO HEXADECIMAL
+# -----------------------------------------------------------------------------
+parse_hex:
+    la $t0, input_buffer
+    lbu $t1, ($t0)
+    bne $t1, 43, parse_hex_check_neg
+    li $t2, 0
+    addi $t0, $t0, 1
+    j parse_hex_digits
+parse_hex_check_neg:
+    bne $t1, 45, error_op
+    li $t2, 1
+    addi $t0, $t0, 1
+parse_hex_digits:
+    li $t3, 0
+parse_hex_loop:
+    lbu $t1, ($t0)
+    beq $t1, $zero, parse_hex_end
+    beq $t1, 10, parse_hex_end
+    blt $t1, 58, parse_hex_num
+    blt $t1, 91, parse_hex_upper
+    subi $t4, $t1, 87
+    j parse_hex_step
+parse_hex_num:
+    subi $t4, $t1, 48
+    j parse_hex_step
+parse_hex_upper:
+    subi $t4, $t1, 55
+parse_hex_step:
+    sll $t3, $t3, 4
+    add $t3, $t3, $t4
+    addi $t0, $t0, 1
+    j parse_hex_loop
+parse_hex_end:
+    sw $t3, int_mag
+    sw $zero, frac_bits
+    sw $t2, sign_flag
+    j output_dispatcher
+
+# -----------------------------------------------------------------------------
+# SALIDA BINARIO
+# -----------------------------------------------------------------------------
+output_bin:
+    print_str(msg_bin)
+    lw $s0, int_mag
+    lw $s1, frac_bits
+    lw $t2, sign_flag
+    beqz $t2, output_bin_pos
+    move $t3, $s0
+    move $t4, $s1
+    not $t3, $t3
+    not $t4, $t4
+    andi $t4, $t4, 0xFF
+    addiu $t4, $t4, 1
+    andi $t5, $t4, 0x100
+    beqz $t5, output_bin_no_carry
+    andi $t4, $t4, 0xFF
+    addiu $t3, $t3, 1
+output_bin_no_carry:
+    move $s0, $t3
+    move $s1, $t4
+output_bin_pos:
+    li $t7, 31
+output_bin_int_loop:
+    print_bit($s0, $t7)
+    addi $t7, $t7, -1
+    bgez $t7, output_bin_int_loop
+    beqz $s1, output_bin_end
+    li $a0, 46
+    li $v0, 11
+    syscall
+    li $t7, 7
+output_bin_frac_loop:
+    print_bit($s1, $t7)
+    addi $t7, $t7, -1
+    bgez $t7, output_bin_frac_loop
+output_bin_end:
+    j menu_loop
+
+# -----------------------------------------------------------------------------
+# SALIDA BCD
+# -----------------------------------------------------------------------------
+output_bcd:
+    print_str(msg_bcd)
+    lw $s0, int_mag
+    li $t8, 0
+    li $t9, 0
+    li $t3, 10
+    move $t0, $s0
+output_bcd_loop:
+    beqz $t0, output_bcd_print
+    div $t0, $t3
+    mflo $t0
+    mfhi $a0
+    sllv $a0, $a0, $t9
+    or $t8, $t8, $a0
+    addi $t9, $t9, 4
+    j output_bcd_loop
+output_bcd_print:
+    li $t7, 28
+output_bcd_print_loop:
+    print_nible($t8, $t7)
+    addi $t7, $t7, -4
+    bgez $t7, output_bcd_print_loop
+    j menu_loop
+
+# -----------------------------------------------------------------------------
+# SALIDA HEXADECIMAL
+# -----------------------------------------------------------------------------
+output_hex:
+    print_str(msg_hex)
+    lw $t2, sign_flag
+    print_sign($t2)
+    lw $s0, int_mag
+    beqz $t2, output_hex_pos
+    negu $s0, $s0
+output_hex_pos:
+    li $t7, 28
+output_hex_loop:
+    srlv $a0, $s0, $t7
+    andi $a0, $a0, 0xF
+    ble $a0, 9, output_hex_digit
+    addi $a0, $a0, 7
+output_hex_digit:
+    addi $a0, $a0, 48
+    li $v0, 11
+    syscall
+    addi $t7, $t7, -4
+    bgez $t7, output_hex_loop
+    j menu_loop
+
+# -----------------------------------------------------------------------------
+# SALIDA OCTAL
+# -----------------------------------------------------------------------------
+output_oct:
+    print_str(msg_octal)
+    lw $t2, sign_flag
+    print_sign($t2)
+    lw $s0, int_mag
+    beqz $t2, output_oct_pos
+    negu $s0, $s0
+output_oct_pos:
+    srl $a0, $s0, 30
+    andi $a0, $a0, 3
+    addi $a0, $a0, 48
+    li $v0, 11
+    syscall
+    li $t7, 27
+output_oct_loop:
+    srlv $a0, $s0, $t7
+    andi $a0, $a0, 7
+    addi $a0, $a0, 48
+    li $v0, 11
+    syscall
+    addi $t7, $t7, -3
+    bgez $t7, output_oct_loop
+    j menu_loop
+
+# -----------------------------------------------------------------------------
+# SALIDA DECIMAL
+# -----------------------------------------------------------------------------
+output_dec:
+    lw $t2, sign_flag
+    print_sign($t2)
+    lw $a0, int_mag
+    beqz $t2, output_dec_print
+    neg $a0, $a0
+output_dec_print:
+    li $v0, 1
+    syscall
+    j menu_loop
